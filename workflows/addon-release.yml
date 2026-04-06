@@ -1,0 +1,70 @@
+name: Release AddOn
+
+on:
+  workflow_call:
+    inputs:
+      addon_name:
+        required: true
+        type: string
+      cf_url:
+        required: true
+        type: string
+      wago_url:
+        required: true
+        type: string
+    secrets:
+      CF_API_KEY:
+        required: true
+      WAGO_API_TOKEN:
+        required: true
+      DISCORD_WEBHOOK_URL:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Discord
+        if: success()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sleep 5
+          VERSION="${{ github.ref_name }}"
+          NOTES=$(gh release view "$VERSION" --json body --jq '.body | if length > 4000 then .[0:4000] + "\n…(see release for full notes)" else . end')
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/$VERSION"
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg version "$VERSION" \
+              --arg notes "$NOTES" \
+              --arg release_url "$RELEASE_URL" \
+              --arg title "${{ inputs.addon_name }} $VERSION" \
+              --arg cf "${{ inputs.cf_url }}" \
+              --arg wago "${{ inputs.wago_url }}" \
+              '{
+                username: "PintaBot",
+                embeds: [{
+                  title: $title,
+                  url: $release_url,
+                  description: $notes,
+                  color: 4576136,
+                  fields: [
+                    { name: "CurseForge", value: ("[Download](" + $cf + ")"), inline: true },
+                    { name: "Wago Addons", value: ("[Download](" + $wago + ")"), inline: true }
+                  ],
+                  footer: { text: "World of Warcraft Addon" }
+                }]
+              }'
+            )"
